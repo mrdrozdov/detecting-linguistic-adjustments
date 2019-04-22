@@ -2,6 +2,7 @@ import argparse
 import os
 import json
 
+from multiprocessing import Pool
 import threading
 from queue import Queue
 
@@ -133,6 +134,13 @@ def run_lcs(options):
         print()
 
 
+def _foo(args):
+    item, sentences = args
+    i, j = item
+    dist = editdistance.eval(sentences[0], sentences[1])
+    return item, dist
+
+
 def run_lev(options):
     records = readfile(options.data)
     sentences_tokenized = [rec['sentence'] for rec in records]
@@ -140,33 +148,57 @@ def run_lev(options):
 
     n = len(sentences)
 
+    pbar = tqdm(total=n*n)
+
+    print('building input')
+    def args_iterator():
+        for i in range(n):
+            for j in range(n):
+                args = ((i, j), (sentences_tokenized[i], sentences_tokenized[j]))
+                yield args
+
     distance_matrix = np.zeros((n, n))
 
-    def do_work(item):
+    print('start to compute distance')
+    p = Pool(processes=options.n_threads)
+
+    for res in p.imap_unordered(_foo, args_iterator(), chunksize=512):
+        pbar.update(1)
+        item, dist = res
         i, j = item
-        distance_matrix[i, j] = editdistance.eval(sentences_tokenized[i], sentences_tokenized[j])
+        distance_matrix[i, j] = dist
 
-    # The worker thread pulls an item from the queue and processes it
-    def worker():
-        while True:
-            item = q.get()
-            do_work(item)
-            q.task_done()
+    p.close()
+    p.join()
+    pbar.close()
 
-    # Create the queue and thread pool.
-    q = Queue()
-    for i in range(options.n_threads):
-         t = threading.Thread(target=worker)
-         t.daemon = True  # thread dies when main thread (only non-daemon thread) exits.
-         t.start()
+    # def do_work(item):
+    #     i, j = item
+    #     distance_matrix[i, j] = editdistance.eval(sentences_tokenized[i], sentences_tokenized[j])
 
-    for i in tqdm(range(n)):
-        for j in range(n):
-            if i == j:
-                continue
-            q.put((i, j))
+    # # The worker thread pulls an item from the queue and processes it
+    # def worker():
+    #     while True:
+    #         item = q.get()
+    #         do_work(item)
+    #         pbar.update(1)
+    #         q.task_done()
 
-    q.join()
+    # # Create the queue and thread pool.
+    # q = Queue()
+    # for i in range(options.n_threads):
+    #      t = threading.Thread(target=worker)
+    #      t.daemon = True  # thread dies when main thread (only non-daemon thread) exits.
+    #      t.start()
+
+    # for i in tqdm(range(n), disable=True):
+    #     for j in range(n):
+    #         if i == j:
+    #             continue
+    #         q.put((i, j))
+
+    # q.join()
+    # pbar.close()
 
     n_topk = 10
     n_tosearch = 100
