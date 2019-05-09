@@ -198,16 +198,19 @@ def run(options):
         for i in range(options.n_swaps_per_sentence):
             # First choose a label.
             label = random.choice(list(label2spans.keys()))
+            new_label = label
+            if options.random_label:
+                new_label = random.choice(list(label2phrase.keys()))
             # Then choose a span.
             span = random.choice(label2spans[label])
 
             phrase = ' '.join(tokens[span[0]:span[1]])
 
-            print('{}. {} {}'.format(i, label, phrase))
+            print('{}. {}->{} {}'.format(i, label, new_label, phrase))
 
             for j in range(options.n_candidates_per_swap):
                 # Then choose a replacement.
-                replacement = random.choice(label2phrase[label])
+                replacement = random.choice(label2phrase[new_label])
 
                 parts = []
 
@@ -237,6 +240,7 @@ if __name__ == '__main__':
     parser.add_argument('--seed', default=None, type=int)
     parser.add_argument('--n_swaps_per_sentence', default=2, type=int)
     parser.add_argument('--n_candidates_per_swap', default=5, type=int)
+    parser.add_argument('--random_label', action='store_true')
     parser.add_argument('--file_in', default=os.path.expanduser('~/data/ptb-dev.jsonl'), type=str)
     options = parser.parse_args()
 
