@@ -1,11 +1,9 @@
 """
-think we can use this function to
-(1) randomly choose a sentence,
-(2) get the keys from its dict,
-(3) pick a random key from its keys,
-(4) randomly pick one of that key’s values,
-(5) get the span corresponding to it, then
-(6) find a sentence with the same key and replace one of its values with the span."
+Creates a dataset of:
+- same cat. swaps
+- diff. cat. swaps
+- non-constituent swaps
+- nonsense swaps
 """
 
 import argparse
@@ -170,6 +168,21 @@ def run(options):
             # print(example_id)
             # print_labeled_spans(constituents, tokens)
 
+    # Book-keeping
+    all_valid_constituents = set()
+    vocab = set()
+
+    print('book-keeping')
+
+    for x in dataset:
+        tokens = x['tokens']
+        label2spans = x['label2spans']
+        vocab.update(tokens)
+        for label, lst in label2spans.items():
+            for start, end in lst:
+                phrase = ' '.join(tokens[start:end])
+                all_valid_constituents.add(phrase)
+
     print('creating dictionary label->phrase for all phrases')
 
     label2phrase = {}
@@ -178,13 +191,78 @@ def run(options):
         tokens = x['tokens']
         label2spans = x['label2spans']
 
+        # Book-keeping.
+        vocab.update(tokens)
+
         for label, lst in label2spans.items():
             for start, end in lst:
                 phrase = ' '.join(tokens[start:end])
                 label2phrase.setdefault(label, set()).add(phrase)
 
+                # Book-keeping.
+                all_valid_constituents.add(phrase)
+
     # Convert to lists instead of sets.
     label2phrase = {k: list(v) for k, v in label2phrase.items()}
+
+    print('creating collection of nonconstituent phrases')
+
+    example2nonconstituents = {}
+
+    for i, x in enumerate(dataset):
+        tokens = x['tokens']
+        label2spans = x['label2spans']
+        span_set = set(itertools.chain(*label2spans.values()))
+        length = len(tokens)
+        max_attempts = length
+        nonconstituents = set()
+        available_sizes = [x[1]-x[0] for x in span_set if x[1]-x[0] < length]
+
+        if len(available_sizes) == 0:
+            print('skip', i, tokens)
+            continue
+
+        for _ in range(max_attempts):
+            size = random.choice(available_sizes)
+            pos = random.choice(range(0, length-size))
+            new_span = (pos, pos+size)
+            if new_span not in span_set:
+                phrase = ' '.join(tokens[new_span[0]:new_span[1]])
+                if phrase not in all_valid_constituents:
+                    nonconstituents.add(phrase)
+
+        if len(nonconstituents) > 0:
+            example2nonconstituents[i] = list(nonconstituents)
+        else:
+            print('skip', i, tokens)
+
+    print('creating collection of nonsense')
+
+    example2nonsense = {}
+
+    for i, x in enumerate(dataset):
+        tokens = x['tokens']
+        label2spans = x['label2spans']
+        span_set = set(itertools.chain(*label2spans.values()))
+        length = len(tokens)
+        max_attempts = length
+        nonsense = set()
+        available_sizes = [x[1]-x[0] for x in span_set]
+
+        if len(available_sizes) == 0:
+            print('skip', i, tokens)
+            continue
+
+        for _ in range(max_attempts):
+            size = random.choice(available_sizes)
+            phrase = ' '.join(random.sample(vocab, size))
+            if phrase not in all_valid_constituents:
+                nonsense.add(phrase)
+
+        if len(nonsense) > 0:
+            example2nonsense[i] = list(nonsense)
+        else:
+            print('skip', i, tokens)
 
     print('create random sentences')
 
@@ -198,17 +276,18 @@ def run(options):
         for i in range(options.n_swaps_per_sentence):
             # First choose a label.
             label = random.choice(list(label2spans.keys()))
-            new_label = label
-            if options.random_label:
-                new_label = random.choice(list(label2phrase.keys()))
             # Then choose a span.
             span = random.choice(label2spans[label])
 
             phrase = ' '.join(tokens[span[0]:span[1]])
 
-            print('{}. {}->{} {}'.format(i, label, new_label, phrase))
+            print('{}. {} {}'.format(i, label, phrase))
 
             for j in range(options.n_candidates_per_swap):
+                new_label = label
+                if options.random_label:
+                    new_label = random.choice(list(label2phrase.keys()))
+
                 # Then choose a replacement.
                 replacement = random.choice(label2phrase[new_label])
 
