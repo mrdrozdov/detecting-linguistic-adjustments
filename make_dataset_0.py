@@ -138,6 +138,26 @@ def print_labeled_spans(label2spans, tokens):
             phrase = ' '.join(tokens[start:end])
             print('\t{}\t{}\t{}'.format(label, (start, end), phrase))
 
+
+def swap_phrase(tokens, replacement, span):
+    parts = []
+
+    # Left of replacement.
+    if span[0] > 0:
+        parts.append(' '.join(tokens[:span[0]]))
+
+    # Replacement.
+    parts.append(replacement)
+
+    # Right of replacement.
+    if span[1] < len(tokens):
+        parts.append(' '.join(tokens[span[1]:]))
+
+    new_sentence = ' '.join(parts)
+
+    return new_sentence
+
+
 def run(options):
     print('seed', options.seed)
 
@@ -266,50 +286,51 @@ def run(options):
 
     print('create random sentences')
 
-    for x in dataset:
-        example_id = x['example_id']
-        tokens = x['tokens']
-        label2spans = x['label2spans']
+    with open(options.file_out, 'w') as f:
+        for x in dataset:
+            example_id = x['example_id']
+            tokens = x['tokens']
+            label2spans = x['label2spans']
 
-        print('example_id={} length={} sentennce={}'.format(example_id, len(tokens), ' '.join(tokens)))
+            for i in range(options.n_swaps_per_sentence):
+                # First choose a label.
+                label = random.choice(list(label2spans.keys()))
+                # Then choose a span.
+                span = random.choice(label2spans[label])
 
-        for i in range(options.n_swaps_per_sentence):
-            # First choose a label.
-            label = random.choice(list(label2spans.keys()))
-            # Then choose a span.
-            span = random.choice(label2spans[label])
+                phrase = ' '.join(tokens[span[0]:span[1]])
 
-            phrase = ' '.join(tokens[span[0]:span[1]])
+                for j in range(options.n_candidates_per_swap):
+                    # Same Cat
+                    replacement = random.choice(label2phrase[label])
+                    new_sentence = swap_phrase(tokens, replacement, span).split(' ')
 
-            print('{}. {} {}'.format(i, label, phrase))
+                    ex = { "example_id": example_id, "original": tokens, "modified": new_sentence, "span_label": label, "span": span, "adjustment_label": "same-cat" }
+                    f.write('{}\n'.format(json.dumps(ex)))
 
-            for j in range(options.n_candidates_per_swap):
-                new_label = label
-                if options.random_label:
+                    # Diff Cat
                     new_label = random.choice(list(label2phrase.keys()))
+                    replacement = random.choice(label2phrase[new_label])
+                    new_sentence = swap_phrase(tokens, replacement, span).split(' ')
 
-                # Then choose a replacement.
-                replacement = random.choice(label2phrase[new_label])
+                    ex = { "example_id": example_id, "original": tokens, "modified": new_sentence, "span_label": label, "target_label": new_label, "span": span, "adjustment_label": "diff-cat" }
+                    f.write('{}\n'.format(json.dumps(ex)))
 
-                parts = []
+                    # Non-constituent
+                    _example_id = random.sample(example2nonconstituents.keys(), 1)[0]
+                    replacement = random.choice(example2nonconstituents[_example_id])
+                    new_sentence = swap_phrase(tokens, replacement, span).split(' ')
 
-                # Left of replacement.
-                if span[0] > 0:
-                    parts.append(' '.join(tokens[:span[0]]))
+                    ex = { "example_id": example_id, "original": tokens, "modified": new_sentence, "span_label": label, "span": span, "adjustment_label": "non-constituent" }
+                    f.write('{}\n'.format(json.dumps(ex)))
 
-                # Replacement.
-                parts.append(replacement)
+                    # Nonsense
+                    _example_id = random.sample(example2nonsense.keys(), 1)[0]
+                    replacement = random.choice(example2nonsense[_example_id])
+                    new_sentence = swap_phrase(tokens, replacement, span).split(' ')
 
-                # Right of replacement.
-                if span[1] < len(tokens):
-                    parts.append(' '.join(tokens[span[1]:]))
-
-                new_sentence = ' '.join(parts)
-
-                print('\t{}. {}'.format(j, new_sentence))
-
-        print()
-        
+                    ex = { "example_id": example_id, "original": tokens, "modified": new_sentence, "span_label": label, "span": span, "adjustment_label": "nonsense" }
+                    f.write('{}\n'.format(json.dumps(ex)))
 
 
 if __name__ == '__main__':
@@ -321,6 +342,7 @@ if __name__ == '__main__':
     parser.add_argument('--n_candidates_per_swap', default=5, type=int)
     parser.add_argument('--random_label', action='store_true')
     parser.add_argument('--file_in', default=os.path.expanduser('~/data/ptb-dev.jsonl'), type=str)
+    parser.add_argument('--file_out', default='adjustment-data.jsonl', type=str)
     options = parser.parse_args()
 
     if options.seed is None:
