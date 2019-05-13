@@ -23,6 +23,16 @@ class AdjustmentDataset(object):
                 extra.setdefault('example_ids', []).append(ex['example_id'])
                 extra.setdefault('labels', []).append(ex['adjustment_label'])
 
+        def indexify_labels(labels):
+            def helper():
+                label2idx = {}
+                for x in labels:
+                    if x not in label2idx:
+                        label2idx[x] = len(label2idx)
+                    yield label2idx[x]
+            return list(helper())
+        extra['labels'] = indexify_labels(extra['labels'])
+
         return {
             "sentences": sentences,
             "extra": extra
