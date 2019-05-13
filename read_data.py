@@ -5,8 +5,8 @@ import numpy as np
 
 
 class AdjustmentDataset(object):
-    EOS_TOKEN = '[EOS]'
-    TASK_TOKEN = '[TASK]'
+    EOS_TOKEN = '[SEP]'
+    TASK_TOKEN = '[CLS]'
 
     def __init__(self):
         super(AdjustmentDataset, self).__init__()
@@ -19,7 +19,7 @@ class AdjustmentDataset(object):
             for line in f:
                 ex = json.loads(line)
 
-                sentences.append(ex['original'] + [self.EOS_TOKEN] + ex['modified'] + [self.TASK_TOKEN])
+                sentences.append([self.TASK_TOKEN] + ex['original'] + [self.EOS_TOKEN] + ex['modified'] + [self.EOS_TOKEN])
                 extra.setdefault('example_ids', []).append(ex['example_id'])
                 extra.setdefault('labels', []).append(ex['adjustment_label'])
 
