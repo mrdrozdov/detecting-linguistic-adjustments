@@ -6,30 +6,33 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-from pytorch_pretrained_bert import BertTokenizer, BertModel, BertForMaskedLM
+# from pytorch_pretrained_bert import BertTokenizer, BertModel, BertForMaskedLM
+
+from embeddings import context_insensitive_character_embeddings
 
 from read_data import *
 
 
 class BatchManager(object):
-    def __init__(self):
+    def __init__(self, pad_token=None, emb_layer=None):
         super(BatchManager, self).__init__()
-
-        # Load pre-trained model tokenizer (vocabulary)
-        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        self.pad_token = pad_token
+        self.emb_layer = emb_layer
 
     def __tokenize_batch(self, sentences):
         return [self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(' '.join(x)))
                 for x in sentences]
 
     def __pad_and_make_tensor(self, tokenized):
-        max_length = max([len(x) for x in tokenized])
-        xs = [x + [0] * (max_length - len(x)) for x in tokenized]
-        return torch.tensor(xs, dtype=torch.long)
+        lengths = [len(x) for x in tokenized]
+        tensors = [self.emb_layer(torch.tensor(x, dtype=torch.long)) for x in tokenized]
+        padded = torch.nn.utils.rnn.pad_sequence(tensors,
+            batch_first=True, padding_value=self.pad_token)
+        return torch.nn.utils.rnn.pack_padded_sequence(padded,
+            batch_first=True, lengths=lengths, enforce_sorted=False)
         
     def prepare_tokens(self, batch_map):
-        tokenized = self.__tokenize_batch(batch_map['sentences'])
-        tensor = self.__pad_and_make_tensor(tokenized)
+        tensor = self.__pad_and_make_tensor(batch_map['sentences'])
         return tensor
 
     def prepare_labels(self, batch_map):
@@ -37,35 +40,50 @@ class BatchManager(object):
 
 
 class Classifier(nn.Module):
-    def __init__(self, size=768, n_classes=4):
+    def __init__(self, embedding_size=1024, size=768, n_classes=4):
         super(Classifier, self).__init__()
-        self.bert = BertModel.from_pretrained('bert-base-uncased')
+        self.rnn = nn.GRU(input_size=embedding_size, hidden_size=size, batch_first=True)
         self.classify = nn.Linear(size, n_classes)
 
     def forward(self, tokens_tensor):
-        encoded_layers, _ = self.bert(tokens_tensor, None)
-        hidden_state = encoded_layers[-1][:, 0]
+        _, h_n = self.rnn(tokens_tensor)
+        hidden_state = h_n.squeeze(0)
         return self.classify(hidden_state)
 
 
 def run(options):
     num_epochs = 10
 
-    train_dataset = AdjustmentDataset().read(options.train_file)
+    train_dataset = AdjustmentDatasetBaseline().read(options.train_file)
     train_iterator = BatchIterator(train_dataset['sentences'], train_dataset['extra'])
+    train_word2idx = train_dataset['metadata']['word2idx']
+    embeddings = context_insensitive_character_embeddings(
+        os.path.expanduser('~/tmp/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5'),
+        os.path.expanduser('~/tmp/elmo_2x4096_512_2048cnn_2xhighway_options.json'),
+        word2idx=train_word2idx,
+        cuda=False,
+        cache_dir='./elmo_cache'
+        )
 
-    batch_manager = BatchManager()
+    emb_layer = nn.Embedding.from_pretrained(torch.from_numpy(embeddings), freeze=True)
+    batch_manager = BatchManager(
+        pad_token=train_word2idx[AdjustmentDatasetBaseline.PADDING_TOKEN],
+        emb_layer=emb_layer)
 
-    model = Classifier()
+    model = Classifier(embedding_size=embeddings.shape[1])
     optimizer = optim.Adam(model.parameters(), lr=2e-3, betas=(0.9, 0.999), eps=1e-8)
+    history = {}
+    history['accuracy'] = []
+    history['loss'] = []
+    trail = 100
 
     for epoch in range(num_epochs):
-        for batch_map in train_iterator.get_iterator():
+        for batch_map in train_iterator.get_iterator(batch_size=options.batch_size):
 
-            tokens_tensor = batch_manager.prepare_tokens(batch_map)
+            packed_sequence = batch_manager.prepare_tokens(batch_map)
             labels_tensor = batch_manager.prepare_labels(batch_map)
 
-            logits = model(tokens_tensor)
+            logits = model(packed_sequence)
 
             loss = nn.CrossEntropyLoss()(logits, labels_tensor)
 
@@ -81,7 +99,16 @@ def run(options):
             predictions = logits.argmax(dim=1)
             accuracy = torch.sum(predictions == labels_tensor).float().item() / labels_tensor.shape[0]
 
-            print('loss = {:.3f}, accuracy = {:.3f}'.format(loss.item(), accuracy))
+            batch_output = {}
+            batch_output['loss'] = loss.item()
+            batch_output['accuracy'] = accuracy
+
+            for k in ['loss', 'accuracy']:
+                history[k].append(batch_output[k])
+                history[k] = history[k][-trail:]
+
+            print('loss = {:.3f}, accuracy-mean = {:.3f}'.format(
+                np.mean(history['loss']), np.mean(history['accuracy'])))
 
 
 if __name__ == '__main__':
@@ -90,6 +117,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed', default=None, type=int)
     parser.add_argument('--train_file', default='./adjustment-data.jsonl', type=str)
+    parser.add_argument('--batch_size', default=4, type=int)
     options = parser.parse_args()
 
     if options.seed is None:

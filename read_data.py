@@ -4,6 +4,78 @@ import torch.utils.data
 import numpy as np
 
 
+class AdjustmentDatasetBaseline(object):
+    EOS_TOKEN = '[SEP]'
+    TASK_TOKEN = '[CLS]'
+    PADDING_TOKEN = "_PAD"
+    UNK_TOKEN = "_"
+    EXISTING_VOCAB_TOKEN = "unused-token-a7g39i"
+
+    def __init__(self, use_cls_token=True, use_sep_token=True, lowercase=True):
+        super(AdjustmentDatasetBaseline, self).__init__()
+        self.use_cls_token = use_cls_token
+        self.use_sep_token = use_sep_token
+        self.lowercase = lowercase
+
+    def read(self, path):
+        sentences = []
+        extra = {}
+        metadata = {}
+
+        with open(path) as f:
+            for line in f:
+                ex = json.loads(line)
+                if self.lowercase:
+                    ex['original'] = [x.lower() for x in ex['original']]
+                    ex['modified'] = [x.lower() for x in ex['modified']]
+                s = []
+                if self.use_cls_token:
+                    s += [self.TASK_TOKEN]
+                s += ex['original']
+                if self.use_sep_token:
+                    s += [self.EOS_TOKEN]
+                s += ex['modified']
+                if self.use_sep_token:
+                    s += [self.EOS_TOKEN]
+                sentences.append(s)
+                extra.setdefault('example_ids', []).append(ex['example_id'])
+                extra.setdefault('labels', []).append(ex['adjustment_label'])
+
+        def indexify_tokens(sentences):
+            word2idx = {}
+            word2idx[self.PADDING_TOKEN] = len(word2idx)
+            word2idx[self.TASK_TOKEN] = len(word2idx)
+            word2idx[self.EOS_TOKEN] = len(word2idx)
+            word2idx[self.UNK_TOKEN] = len(word2idx)
+            word2idx[self.EXISTING_VOCAB_TOKEN] = len(word2idx)
+            def helper():
+                for s in sentences:
+                    for x in s:
+                        if x not in word2idx:
+                            word2idx[x] = len(word2idx)
+                for s in sentences:
+                    yield [word2idx[x] for x in s]
+            sentences = list(helper())
+            return sentences, word2idx
+        sentences, metadata['word2idx'] = indexify_tokens(sentences)
+
+        def indexify_labels(labels):
+            def helper():
+                label2idx = {}
+                for x in labels:
+                    if x not in label2idx:
+                        label2idx[x] = len(label2idx)
+                    yield label2idx[x]
+            return list(helper())
+        extra['labels'] = indexify_labels(extra['labels'])
+
+        return {
+            "sentences": sentences,
+            "extra": extra,
+            "metadata": metadata
+        }
+
+
 class AdjustmentDataset(object):
     EOS_TOKEN = '[SEP]'
     TASK_TOKEN = '[CLS]'
