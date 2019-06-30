@@ -58,12 +58,13 @@ class Classifier(nn.Module):
 
 class Summary(object):
     def __init__(self, trail=100):
-        self.trail = 100
+        self.trail = trail
         self.history = {}
 
     def update_kv(self, k, v):
         self.history.setdefault(k, []).append(v)
-        self.history[k] = self.history[k][-self.trail:]
+        if self.trail is not None:
+            self.history[k] = self.history[k][-self.trail:]
 
     def mean(self, k):
         return np.mean(self.history[k])
@@ -72,12 +73,30 @@ class Summary(object):
         return np.sum(self.history[k])
 
 
+def print_cm(S, idx2label):
+    print('--- confusion-matrix (ground_truth, predicted) ---')
+    for gt in idx2label.values():
+        correct = 0
+        total = 0
+        for pred in idx2label.values():
+            k = (gt, pred)
+            x = S.sum(k)
+            total += x
+            if gt == pred:
+                correct += x
+            print(k, x)
+        print('{} {:.3f} ({}/{})'.format(
+            gt, correct/total, correct, total))
+    print('--- confusion-matrix ---')
+
+
 def run(options):
     num_epochs = 10
 
     train_dataset = AdjustmentDatasetBaseline().read(options.train_file)
     train_iterator = BatchIterator(train_dataset['sentences'], train_dataset['extra'])
     train_word2idx = train_dataset['metadata']['word2idx']
+    idx2label = {v: k for k, v in train_dataset['metadata']['label2idx'].items()}
     embeddings = context_insensitive_character_embeddings(
         os.path.expanduser('~/tmp/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5'),
         os.path.expanduser('~/tmp/elmo_2x4096_512_2048cnn_2xhighway_options.json'),
@@ -96,6 +115,8 @@ def run(options):
     model = Classifier(embedding_size=embeddings.shape[1])
     optimizer = optim.Adam(model.parameters(), lr=2e-3, betas=(0.9, 0.999), eps=1e-8)
     S = Summary(trail=100)
+    log_every = 100
+    summary_every = 100
 
     if options.cuda:
         model.cuda()
@@ -122,15 +143,35 @@ def run(options):
             predictions = logits.argmax(dim=1)
             accuracy = torch.sum(predictions == labels_tensor).float().item() / labels_tensor.shape[0]
 
+            # Standard Logging.
             batch_output = {}
             batch_output['loss'] = loss.item()
             batch_output['accuracy'] = accuracy
-
             for k in ['loss', 'accuracy']:
                 S.update_kv(k, batch_output[k])
 
-            print('step = {:08}, loss = {:.3f}, accuracy-mean = {:.3f}'.format(
-                step, S.mean('loss'), S.mean('accuracy')))
+            if step % log_every == 0:
+                print('step = {:08}, loss = {:.3f}, accuracy-mean = {:.3f}'.format(
+                    step, S.mean('loss'), S.mean('accuracy')))
+
+            # Advanced Logging.
+            batch_size = labels_tensor.shape[0]
+            toupdate = {}
+            for gt in idx2label.values():
+                for pred in idx2label.values():
+                    toupdate[(gt, pred)] = 0
+            for i in range(batch_size):
+                pred = idx2label[predictions[i].item()]
+                gt = idx2label[labels_tensor[i].item()]
+                toupdate[(gt, pred)] += 1
+            for gt in idx2label.values():
+                for pred in idx2label.values():
+                    k = (gt, pred)
+                    v = toupdate[k]
+                    S.update_kv(k, v)
+
+            if step % summary_every == 0:
+                print_cm(S, idx2label)
 
             step += 1
 

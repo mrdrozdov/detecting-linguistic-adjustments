@@ -60,14 +60,14 @@ class AdjustmentDatasetBaseline(object):
         sentences, metadata['word2idx'] = indexify_tokens(sentences)
 
         def indexify_labels(labels):
+            label2idx = {}
             def helper():
-                label2idx = {}
                 for x in labels:
                     if x not in label2idx:
                         label2idx[x] = len(label2idx)
                     yield label2idx[x]
-            return list(helper())
-        extra['labels'] = indexify_labels(extra['labels'])
+            return list(helper()), label2idx
+        extra['labels'], metadata['label2idx'] = indexify_labels(extra['labels'])
 
         return {
             "sentences": sentences,
@@ -187,7 +187,7 @@ class BatchIterator(object):
                 batch_map[k] = [v[idx] for idx in index]
 
             return batch_map
-        
+
         if self.loader is None:
             rng = np.random.RandomState(seed=seed)
             dataset = SimpleDataset(self.sentences)
