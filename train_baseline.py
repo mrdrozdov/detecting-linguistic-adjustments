@@ -56,6 +56,22 @@ class Classifier(nn.Module):
         return self.classify(hidden_state)
 
 
+class Summary(object):
+    def __init__(self, trail=100):
+        self.trail = 100
+        self.history = {}
+
+    def update_kv(self, k, v):
+        self.history.setdefault(k, []).append(v)
+        self.history[k] = self.history[k][-self.trail:]
+
+    def mean(self, k):
+        return np.mean(self.history[k])
+
+    def sum(self, k):
+        return np.sum(self.history[k])
+
+
 def run(options):
     num_epochs = 10
 
@@ -79,13 +95,7 @@ def run(options):
 
     model = Classifier(embedding_size=embeddings.shape[1])
     optimizer = optim.Adam(model.parameters(), lr=2e-3, betas=(0.9, 0.999), eps=1e-8)
-    history = {}
-    history['accuracy'] = []
-    history['loss'] = []
-    trail = 100
-
-    summary_every = 100
-    summary = []
+    S = Summary(trail=100)
 
     if options.cuda:
         model.cuda()
@@ -117,12 +127,10 @@ def run(options):
             batch_output['accuracy'] = accuracy
 
             for k in ['loss', 'accuracy']:
-                history[k].append(batch_output[k])
-                history[k] = history[k][-trail:]
+                S.update_kv(k, batch_output[k])
 
             print('step = {:08}, loss = {:.3f}, accuracy-mean = {:.3f}'.format(
-                step,
-                np.mean(history['loss']), np.mean(history['accuracy'])))
+                step, S.mean('loss'), S.mean('accuracy')))
 
             step += 1
 
