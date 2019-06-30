@@ -4,6 +4,60 @@ import torch.utils.data
 import numpy as np
 
 
+class ConsolidateDatasets(object):
+    def get_inverse_mapping(self, lst, master=None):
+        if master is None:
+            master = {}
+        inverse_lst = []
+
+        for d in lst:
+            old2master = {}
+            for k, v in d.items():
+                if k not in master:
+                    master[k] = len(master)
+                old2master[v] = master[k]
+            inverse_lst.append(old2master)
+        return master, inverse_lst
+
+    def remap_tokens(self, datasets):
+        lst = [x['metadata']['word2idx'] for x in datasets.values()]
+        master, inverse_lst = self.get_inverse_mapping(lst,
+            master=AdjustmentDatasetBaseline().init_word2idx())
+
+        def helper(s, old2master):
+            return [old2master[w] for w in s]
+
+        for x, old2master in zip(datasets.values(), inverse_lst):
+            # Remap.
+            for i in range(len(x['sentences'])):
+                x['sentences'][i] = helper(x['sentences'][i], old2master)
+            # Overwrite mapping.
+            x['metadata']['word2idx'] = master
+        return datasets
+
+    def remap_labels(self, datasets):
+        lst = [x['metadata']['label2idx'] for x in datasets.values()]
+        master, inverse_lst = self.get_inverse_mapping(lst)
+
+        def helper(y, old2master):
+            return old2master[y]
+
+        for x, old2master in zip(datasets.values(), inverse_lst):
+            # Remap.
+            for i in range(len(x['sentences'])):
+                x['extra']['labels'][i] = helper(x['extra']['labels'][i], old2master)
+            # Overwrite mapping.
+            x['metadata']['label2idx'] = master
+        return datasets
+
+    def run(self, datasets, run_token=True, run_label=True):
+        if run_token:
+            datasets = self.remap_tokens(datasets)
+        if run_label:
+            datasets = self.remap_labels(datasets)
+        return datasets
+
+
 class AdjustmentDatasetBaseline(object):
     EOS_TOKEN = '[SEP]'
     TASK_TOKEN = '[CLS]'
@@ -16,6 +70,15 @@ class AdjustmentDatasetBaseline(object):
         self.use_cls_token = use_cls_token
         self.use_sep_token = use_sep_token
         self.lowercase = lowercase
+
+    def init_word2idx(self):
+        word2idx = {}
+        word2idx[self.PADDING_TOKEN] = len(word2idx)
+        word2idx[self.TASK_TOKEN] = len(word2idx)
+        word2idx[self.EOS_TOKEN] = len(word2idx)
+        word2idx[self.UNK_TOKEN] = len(word2idx)
+        word2idx[self.EXISTING_VOCAB_TOKEN] = len(word2idx)
+        return word2idx
 
     def read(self, path):
         sentences = []
@@ -42,12 +105,7 @@ class AdjustmentDatasetBaseline(object):
                 extra.setdefault('labels', []).append(ex['adjustment_label'])
 
         def indexify_tokens(sentences):
-            word2idx = {}
-            word2idx[self.PADDING_TOKEN] = len(word2idx)
-            word2idx[self.TASK_TOKEN] = len(word2idx)
-            word2idx[self.EOS_TOKEN] = len(word2idx)
-            word2idx[self.UNK_TOKEN] = len(word2idx)
-            word2idx[self.EXISTING_VOCAB_TOKEN] = len(word2idx)
+            word2idx = self.init_word2idx()
             def helper():
                 for s in sentences:
                     for x in s:

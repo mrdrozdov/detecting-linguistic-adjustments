@@ -2,6 +2,10 @@ import os
 import json
 import random
 
+from collections import OrderedDict
+
+import numpy as np
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -48,7 +52,10 @@ class Classifier(nn.Module):
     def __init__(self, embedding_size=1024, size=768, n_classes=4):
         super(Classifier, self).__init__()
         self.rnn = nn.GRU(input_size=embedding_size, hidden_size=size, batch_first=True)
-        self.classify = nn.Linear(size, n_classes)
+        self.classify = nn.Sequential(
+                nn.Linear(size, size),
+                nn.ReLU(),
+                nn.Linear(size, n_classes))
 
     def forward(self, tokens_tensor):
         _, h_n = self.rnn(tokens_tensor)
@@ -90,10 +97,49 @@ def print_cm(S, idx2label):
     print('--- confusion-matrix ---')
 
 
+def run_eval(options, model, batch_manager, eval_dataset):
+    print('### eval ###')
+    eval_iterator = BatchIterator(eval_dataset['sentences'], eval_dataset['extra'])
+    idx2label = {v: k for k, v in eval_dataset['metadata']['label2idx'].items()}
+
+    S = Summary(trail=None)
+
+    for batch_map in eval_iterator.get_iterator(batch_size=options.batch_size, include_partial=True):
+        packed_sequence = batch_manager.prepare_tokens(batch_map)
+        labels_tensor = batch_manager.prepare_labels(batch_map)
+        logits = model(packed_sequence)
+
+        predictions = logits.argmax(dim=1)
+
+        # Advanced Logging.
+        batch_size = labels_tensor.shape[0]
+        toupdate = {}
+        for gt in idx2label.values():
+            for pred in idx2label.values():
+                toupdate[(gt, pred)] = 0
+        for i in range(batch_size):
+            pred = idx2label[predictions[i].item()]
+            gt = idx2label[labels_tensor[i].item()]
+            toupdate[(gt, pred)] += 1
+        for gt in idx2label.values():
+            for pred in idx2label.values():
+                k = (gt, pred)
+                v = toupdate[k]
+                S.update_kv(k, v)
+
+    print_cm(S, idx2label)
+
+
 def run(options):
     num_epochs = 10
 
-    train_dataset = AdjustmentDatasetBaseline().read(options.train_file)
+    datasets = OrderedDict()
+    datasets['tr'] = AdjustmentDatasetBaseline().read(options.tr_file)
+    datasets['va'] = AdjustmentDatasetBaseline().read(options.va_file)
+
+    datasets = ConsolidateDatasets().run(datasets)
+
+    train_dataset = datasets['tr']
     train_iterator = BatchIterator(train_dataset['sentences'], train_dataset['extra'])
     train_word2idx = train_dataset['metadata']['word2idx']
     idx2label = {v: k for k, v in train_dataset['metadata']['label2idx'].items()}
@@ -117,6 +163,7 @@ def run(options):
     S = Summary(trail=100)
     log_every = 100
     summary_every = 100
+    eval_every = 500
 
     if options.cuda:
         model.cuda()
@@ -173,6 +220,9 @@ def run(options):
             if step % summary_every == 0:
                 print_cm(S, idx2label)
 
+            if step % eval_every == 0:
+                run_eval(options, model, batch_manager, datasets['va'])
+
             step += 1
 
 
@@ -182,7 +232,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed', default=None, type=int)
     parser.add_argument('--cuda', action='store_true')
-    parser.add_argument('--train_file', default='./adjustment-data.jsonl', type=str)
+    parser.add_argument('--tr_file', default='./adjustment-tr.jsonl', type=str)
+    parser.add_argument('--va_file', default='./adjustment-va.jsonl', type=str)
     parser.add_argument('--batch_size', default=4, type=int)
     options = parser.parse_args()
 
