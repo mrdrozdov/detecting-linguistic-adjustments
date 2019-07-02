@@ -232,6 +232,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed', default=None, type=int)
     parser.add_argument('--cuda', action='store_true')
+    parser.add_argument('--sample_mode', default='fixed_length', choices=('simple', 'fixed_length'))
     parser.add_argument('--tr_file', default='./adjustment-tr.jsonl', type=str)
     parser.add_argument('--va_file', default='./adjustment-va.jsonl', type=str)
     parser.add_argument('--batch_size', default=4, type=int)
