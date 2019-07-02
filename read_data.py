@@ -275,7 +275,7 @@ class FixedLengthBatchSampler(torch.utils.data.Sampler):
         index = self.index + 1
 
         length = self.order[index]
-        batch_size = batch_size
+        batch_size = self.batch_size
         position = self.state[length]['position'] + 1
         start = position * batch_size
         batch_index = self.length_map[length][start:start+batch_size]

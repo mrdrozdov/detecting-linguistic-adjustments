@@ -32,20 +32,18 @@ class BatchManager(object):
         return [self.tokenizer.convert_tokens_to_ids(self.tokenizer.tokenize(' '.join(x)))
                 for x in sentences]
 
-    def __pad_and_make_tensor(self, tokenized):
+    def prepare_tokens(self, tokenized, pack=True):
         lengths = torch.tensor([len(x) for x in tokenized], dtype=torch.long, device=self.device)
-        tensors = [self.emb_layer(torch.tensor(x, dtype=torch.long, device=self.device)) for x in tokenized]
-        padded = torch.nn.utils.rnn.pad_sequence(tensors,
+        res = [self.emb_layer(torch.tensor(x, dtype=torch.long, device=self.device)) for x in tokenized]
+        res = torch.nn.utils.rnn.pad_sequence(res,
             batch_first=True, padding_value=self.pad_token)
-        return torch.nn.utils.rnn.pack_padded_sequence(padded,
-            batch_first=True, lengths=lengths, enforce_sorted=False)
+        if pack:
+            res = torch.nn.utils.rnn.pack_padded_sequence(res,
+                batch_first=True, lengths=lengths, enforce_sorted=False)
+        return res
 
-    def prepare_tokens(self, batch_map):
-        tensor = self.__pad_and_make_tensor(batch_map['sentences'])
-        return tensor
-
-    def prepare_labels(self, batch_map):
-        return torch.tensor(batch_map['labels'], dtype=torch.long, device=self.device)
+    def prepare_labels(self, labels):
+        return torch.tensor(labels, dtype=torch.long, device=self.device)
 
 
 class Classifier(nn.Module):
@@ -104,9 +102,9 @@ def run_eval(options, model, batch_manager, eval_dataset):
 
     S = Summary(trail=None)
 
-    for batch_map in eval_iterator.get_iterator(batch_size=options.batch_size, include_partial=True):
-        packed_sequence = batch_manager.prepare_tokens(batch_map)
-        labels_tensor = batch_manager.prepare_labels(batch_map)
+    for batch_map in eval_iterator.get_iterator(batch_size=options.batch_size, include_partial=True, sample_mode='fixed_length'):
+        packed_sequence = batch_manager.prepare_tokens(batch_map['sentences'], pack=options.pack)
+        labels_tensor = batch_manager.prepare_labels(batch_map['labels'])
         logits = model(packed_sequence)
 
         predictions = logits.argmax(dim=1)
@@ -131,7 +129,7 @@ def run_eval(options, model, batch_manager, eval_dataset):
 
 
 def run(options):
-    num_epochs = 10
+    num_epochs = 100
 
     datasets = OrderedDict()
     datasets['tr'] = AdjustmentDatasetBaseline().read(options.tr_file)
@@ -159,7 +157,7 @@ def run(options):
     batch_manager.emb_layer = emb_layer.to(batch_manager.device)
 
     model = Classifier(embedding_size=embeddings.shape[1])
-    optimizer = optim.Adam(model.parameters(), lr=2e-3, betas=(0.9, 0.999), eps=1e-8)
+    optimizer = optim.Adam(model.parameters(), lr=options.lr, betas=(0.9, 0.999), eps=1e-8)
     S = Summary(trail=100)
     log_every = 100
     summary_every = 100
@@ -171,10 +169,10 @@ def run(options):
     step = 0
 
     for epoch in range(num_epochs):
-        for batch_map in train_iterator.get_iterator(batch_size=options.batch_size):
+        for batch_map in train_iterator.get_iterator(batch_size=options.batch_size, sample_mode=options.sample_mode):
 
-            packed_sequence = batch_manager.prepare_tokens(batch_map)
-            labels_tensor = batch_manager.prepare_labels(batch_map)
+            packed_sequence = batch_manager.prepare_tokens(batch_map['sentences'], pack=options.pack)
+            labels_tensor = batch_manager.prepare_labels(batch_map['labels'])
             logits = model(packed_sequence)
             loss = nn.CrossEntropyLoss()(logits, labels_tensor)
 
@@ -231,7 +229,9 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--seed', default=None, type=int)
+    parser.add_argument('--lr', default=2e-3, type=float)
     parser.add_argument('--cuda', action='store_true')
+    parser.add_argument('--pack', action='store_true')
     parser.add_argument('--sample_mode', default='fixed_length', choices=('simple', 'fixed_length'))
     parser.add_argument('--tr_file', default='./adjustment-tr.jsonl', type=str)
     parser.add_argument('--va_file', default='./adjustment-va.jsonl', type=str)
