@@ -1,0 +1,5 @@
+allennlp
+nltk
+numpy
+torch
+tqdm
