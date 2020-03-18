@@ -146,7 +146,7 @@ def run(options):
         os.path.expanduser('~/tmp/elmo_2x4096_512_2048cnn_2xhighway_options.json'),
         word2idx=train_word2idx,
         cuda=False,
-        cache_dir='./elmo_cache'
+        cache_dir='./cache'
         )
 
     emb_layer = nn.Embedding.from_pretrained(torch.from_numpy(embeddings), freeze=True)

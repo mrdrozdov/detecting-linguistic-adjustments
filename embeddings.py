@@ -31,7 +31,7 @@ def load_elmo_cache(path, order):
     return vectors[order]
 
 
-def context_insensitive_character_embeddings(weights_path, options_path, word2idx, cuda=False, cache_dir=None):
+def context_insensitive_character_embeddings(weights_path, options_path, word2idx, cuda=False, cache_dir=None, zero_tokens=['_PAD'], rand_tokens=['[SEP]', '[CLS]']):
     """
     Embeddings are always saved in sorted order (by vocab) and loaded according to word2idx.
     """
@@ -70,9 +70,11 @@ def context_insensitive_character_embeddings(weights_path, options_path, word2id
 
     vectors = np.concatenate([x[0] for x in vec_lst], axis=0)
 
-    vectors[word2idx['_PAD']] = 0
-    vectors[word2idx['[SEP]']] = np.random.randn(vectors.shape[1])
-    vectors[word2idx['[CLS]']] = np.random.randn(vectors.shape[1])
+    for tok in zero_tokens:
+        vectors[word2idx[tok]] = 0
+
+    for tok in rand_tokens:
+        vectors[word2idx[tok]] = np.random.randn(vectors.shape[1])
 
     if cache_dir is not None:
         print('Saving cached elmo vectors: {}'.format(cache_path))
