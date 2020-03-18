@@ -162,7 +162,7 @@ def get_cells_for_spans(chart, spans, example_id):
     outside = chart['outside_h'][batch_index, 0, cell_index]
     cell = torch.cat([inside, outside], dim=1)
 
-    assert cell.shape == (len(cell_index), size)
+    assert cell.shape == (len(cell_index), 2 * size)
 
     return span_info, cell
 
@@ -193,7 +193,7 @@ def run(options):
         options.elmo_options_file,
         word2idx=word2idx,
         cuda=options.cuda,
-        cache_dir='./cache',
+        cache_dir=options.cache,
         zero_tokens=[Vocab.PADDING_TOKEN] + list(['_RESERVED_{}_'.format(i) for i in range(Vocab.NUM_RESERVED_TOKENS)]),
         rand_tokens=[Vocab.UNK_TOKEN],
         )
@@ -268,6 +268,8 @@ if __name__ == '__main__':
     parser.add_argument('--max_length', default=0, type=int)
     parser.add_argument('--batch_size', default=4, type=int)
     parser.add_argument('--file_in', default=os.path.join(HOME, 'data/snli_1.0/snli_1.0_dev.jsonl'), type=str)
+    parser.add_argument('--cache', default='./cache', type=str)
+    parser.add_argument('--diora_file', default='http://diora-naacl-2019.s3.amazonaws.com/diora-checkpoints.zip', type=str)
     parser.add_argument('--elmo_options_file', default='https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json', type=str)
     parser.add_argument('--elmo_weight_file',  default='https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_weights.hdf5', type=str)
     options = parser.parse_args()

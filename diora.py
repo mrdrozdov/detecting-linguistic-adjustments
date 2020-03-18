@@ -12,6 +12,37 @@ def build_net(options, embeddings):
     diora = DIORA(input_size=size, size=size, k=1)
     net = Net(embed, diora)
 
+    if options.diora_file is not None:
+        import os
+
+        diora_file = options.diora_file
+        cache = options.cache
+        zipname = os.path.basename(diora_file)
+
+        if not os.path.exists(os.path.join(cache, zipname)):
+            os.system('cd {} && wget {}'.format(cache, diora_file))
+            os.system('cd {} && unzip {}'.format(cache, zipname))
+
+        modelname = os.path.join(cache, 'softmax-mlp-shared/model.pt')
+        from_disk = torch.load(modelname, map_location=lambda storage, loc: storage)['state_dict']
+        from_net = net.state_dict()
+        to_load = {}
+
+        for k in list(from_disk.keys()):
+            new_k = k.replace('module.', '').replace('_func', '')
+            if new_k in from_net:
+                print('[diora] loading {}'.format(k))
+                to_load[new_k] = from_disk[k]
+            else:
+                print('[diora] skipping {}'.format(k))
+
+        for k in from_net.keys():
+            if k not in to_load:
+                print('[diora] retaining {}'.format(k))
+                to_load[k] = from_net[k]
+
+        net.load_state_dict(to_load)
+
     return net
 
 
@@ -81,7 +112,7 @@ class ComposeMLP(nn.Module):
 
         if leaf:
             self.V = nn.Parameter(torch.FloatTensor(self.input_size, self.size))
-        self.W = nn.Parameter(torch.FloatTensor(2 * self.size, self.size))
+        self.W_0 = nn.Parameter(torch.FloatTensor(2 * self.size, self.size))
         self.B = nn.Parameter(torch.FloatTensor(self.size))
 
         for i in range(1, n_layers):
@@ -100,7 +131,7 @@ class ComposeMLP(nn.Module):
 
     def forward(self, h0, h1):
         input_h = torch.cat([h0, h1], -1)
-        h = torch.relu(torch.matmul(input_h, self.W) + self.B)
+        h = torch.relu(torch.matmul(input_h, self.W_0) + self.B)
         for i in range(1, self.n_layers):
             W = getattr(self, 'W_{}'.format(i))
             B = getattr(self, 'B_{}'.format(i))
@@ -118,13 +149,9 @@ class DIORA(nn.Module):
 
         self.inside_compose = ComposeMLP(self.size, n_layers=2, leaf=True, input_size=self.input_size)
         self.outside_compose = ComposeMLP(self.size, n_layers=2, leaf=False)
-
         self.inside_score = Bilinear(self.size)
         self.outside_score = Bilinear(self.size)
-
-        self.mat = nn.Parameter(torch.FloatTensor(size, size))
-
-        self.outside_h_root = nn.Parameter(torch.FloatTensor(size))
+        self.root_vector_out_h = nn.Parameter(torch.FloatTensor(size))
 
         self.iu = IndexUtil()
 
@@ -242,7 +269,7 @@ class DIORA(nn.Module):
         # Build chart.
         init = {}
         init[('inside_h', 0, 0, length)] = h
-        init[('outside_h', 0, -1, None)] = self.outside_h_root.view(1, 1, self.size).expand(batch_size, 1, self.size)
+        init[('outside_h', 0, -1, None)] = self.root_vector_out_h.view(1, 1, self.size).expand(batch_size, 1, self.size)
         chart = build_chart(batch_size, length, size, init=init, device=device)
 
         # Run inside / outside.
