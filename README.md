@@ -8,6 +8,12 @@ python make_dataset_0.py
 python split_data.py
 ```
 
+# Make Data with DIORA (exploratory)
+
+```
+python make_dataset_from_diora.py
+```
+
 # Train Model
 
 Only GRU baseline works right now. Larger batch size helps performance.
@@ -19,9 +25,5 @@ python train_baseline.py --cuda --batch_size 128
 # Dependencies
 
 ```
-pip install editdistance
-pip install nltk
-pip install numpy
-pip install scikit-learn
-pip install tqdm
+pip install -r requirements.txt
 ```

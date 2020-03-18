@@ -1,5 +1,7 @@
 allennlp
+editdistance
 nltk
 numpy
+scikit-learn
 torch
 tqdm

@@ -183,6 +183,20 @@ class PhraseData(object):
     def freeze(self):
         self.frozen = True
 
+        span_info = []
+        for lst in self.data['span_info']:
+            for x in lst:
+                span_info.append(x)
+        self.data['span_info'] = span_info
+
+        self.data['cell'] = np.concatenate(self.data['cell'], axis=0)
+
+    def write(self, fn_info, fn_vec):
+        with open(fn_info, 'w') as f:
+            for x in self.data['span_info']:
+                f.write(json.dumps(x, sort_keys=True) + '\n')
+        np.savetxt(fn_vec, self.data['cell'])
+
 
 def run(options):
     print('FLAGS:')
@@ -294,6 +308,8 @@ def run(options):
 
     phrase_data.freeze()
 
+    phrase_data.write(options.file_out_span_info, options.file_out_span_vec)
+
 
 if __name__ == '__main__':
     import argparse
@@ -306,6 +322,8 @@ if __name__ == '__main__':
     parser.add_argument('--max_length', default=40, type=int)
     parser.add_argument('--batch_size', default=4, type=int)
     parser.add_argument('--file_in', default=os.path.join(HOME, 'data/snli_1.0/snli_1.0_dev.jsonl'), type=str)
+    parser.add_argument('--file_out_span_vec', default='./span-vec.npy', type=str)
+    parser.add_argument('--file_out_span_info', default='./span-info.jsonl', type=str)
     parser.add_argument('--cache', default='./cache', type=str)
     parser.add_argument('--diora_file', default='http://diora-naacl-2019.s3.amazonaws.com/diora-checkpoints.zip', type=str)
     parser.add_argument('--elmo_options_file', default='https://s3-us-west-2.amazonaws.com/allennlp/models/elmo/2x4096_512_2048cnn_2xhighway/elmo_2x4096_512_2048cnn_2xhighway_options.json', type=str)
