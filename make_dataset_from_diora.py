@@ -58,7 +58,7 @@ class ReadNLI(object):
         metadata = {}
 
         with open(path) as f:
-            for line in tqdm(f, desc='read'):
+            for i, line in tqdm(enumerate(f), desc='read'):
                 skip = False
 
                 ex = json.loads(line)
@@ -83,8 +83,7 @@ class ReadNLI(object):
                     data.setdefault(k, []).append(v)
 
                 if 'example_id' not in ex:
-                    example_id = len(data['example_id'])
-                    data['example_id'].append(example_id)
+                    data['example_id'].append(i)
 
         check_length = None
         for k in data.keys():
@@ -240,15 +239,13 @@ def run(options):
         return batch_map
 
     class Sampler(object):
-        def __init__(self, data, example_id):
+        def __init__(self, data):
             self.data = data
-            self.example_id = example_id
-            assert len(data) == len(example_id)
 
         def init(self):
             buckets = {}
-            for idx, s in zip(self.example_id, self.data):
-                buckets.setdefault(len(s), []).append(idx)
+            for i, s in enumerate(self.data):
+                buckets.setdefault(len(s), []).append(i)
 
             self.current_bucket = 0
             self.bucket_order = list(sorted(buckets.keys()))
@@ -282,7 +279,7 @@ def run(options):
             return sentence_ids
 
     # One sentence at a time.
-    sampler = Sampler(dataset['data']['sentence1'], dataset['data']['example_id'])
+    sampler = Sampler(dataset['data']['sentence1'])
     sampler.init()
     phrase_data = PhraseData()
     phrase_data.init()
