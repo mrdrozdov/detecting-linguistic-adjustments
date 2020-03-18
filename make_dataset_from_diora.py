@@ -139,7 +139,7 @@ class Vocab(object):
 
 
 def get_cells_for_spans(chart, spans, example_id):
-    batch_size, length, size = chart['info']['batch_size'], chart['info']['length'], chart['info']['size']
+    batch_size, length, cell_size = chart['info']['batch_size'], chart['info']['length'], chart['info']['size']
     offset_lookup = get_offset_lookup(length)
     batch_index, cell_index, span_info = [], [], []
 
@@ -162,9 +162,26 @@ def get_cells_for_spans(chart, spans, example_id):
     outside = chart['outside_h'][batch_index, 0, cell_index]
     cell = torch.cat([inside, outside], dim=1)
 
-    assert cell.shape == (len(cell_index), 2 * size)
+    assert cell.shape == (len(cell_index), 2 * cell_size)
 
     return span_info, cell
+
+
+class PhraseData(object):
+    def __init__(self):
+        self.frozen = False
+        self.data = None
+
+    def init(self):
+        self.data = {}
+
+    def add(self, span_info, cell):
+        assert self.frozen == False
+        self.data.setdefault('span_info', []).append(span_info)
+        self.data.setdefault('cell', []).append(cell.data.cpu().numpy())
+
+    def freeze(self):
+        self.frozen = True
 
 
 def run(options):
@@ -209,37 +226,55 @@ def run(options):
         return batch_map
 
     class Sampler(object):
-        def __init__(self):
-            self.seen = set()
+        def __init__(self, data, example_id):
+            self.data = data
+            self.example_id = example_id
+            assert len(data) == len(example_id)
 
-        def sample_sentence_ids(self, n=4, num_tries=1000):
-            length = None
+        def init(self):
+            buckets = {}
+            for idx, s in zip(self.example_id, self.data):
+                buckets.setdefault(len(s), []).append(idx)
+
+            self.current_bucket = 0
+            self.bucket_order = list(sorted(buckets.keys()))
+            self.buckets = buckets
+            self.bucket_offset = {k: 0 for k in buckets.keys()}
+
+        def sample_sentence_ids(self, n=4):
             sentence_ids = []
-            dataset_size = len(dataset['data']['sentence1'])
-            dataset_range = list(range(dataset_size))
-            sofar = 0
+
             while True:
-                if sofar == num_tries:
+                bucket_idx = self.current_bucket
+                if bucket_idx == len(self.bucket_order):
                     return None
-                sofar += 1
-                idx = random.sample(dataset_range, 1)[0]
-                if idx in self.seen:
+
+                bucket_k = self.bucket_order[bucket_idx]
+                bucket = self.buckets[bucket_k]
+                bucket_offset = self.bucket_offset[bucket_k]
+                bucket_size = len(bucket)
+                if bucket_offset == bucket_size:
+                    self.current_bucket += 1
+                    if len(sentence_ids) > 0:
+                        break
                     continue
-                if length is None:
-                    length = len(dataset['data']['sentence1'][idx])
-                if len(dataset['data']['sentence1'][idx]) != length:
-                    continue
-                sentence_ids.append(idx)
-                sofar = 0
+
+                self.bucket_offset[bucket_k] += 1
+
+                sentence_ids.append(bucket[bucket_offset])
                 if len(sentence_ids) == n:
                     break
+
             return sentence_ids
 
     # One sentence at a time.
-    sampler = Sampler()
+    sampler = Sampler(dataset['data']['sentence1'], dataset['data']['example_id'])
+    sampler.init()
+    phrase_data = PhraseData()
+    phrase_data.init()
 
     with torch.no_grad():
-        for i in range(options.num_iter):
+        for i in tqdm(range(options.num_iter), desc='encode'):
 
             sentence_ids = sampler.sample_sentence_ids(n=options.batch_size)
             if sentence_ids is None:
@@ -255,17 +290,20 @@ def run(options):
             out = net(batch_map['sentence1'])
             span_info, cell = get_cells_for_spans(out['chart'], batch_map['sentence1_parse_spans'], batch_map['example_id'])
 
+            phrase_data.add(span_info, cell)
+
+    phrase_data.freeze()
 
 
 if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('--seed', default=None, type=int)
+    parser.add_argument('--seed', default=11, type=int)
     parser.add_argument('--cuda', action='store_true')
     parser.add_argument('--size', default=400, type=int)
-    parser.add_argument('--num_iter', default=10, type=int)
-    parser.add_argument('--max_length', default=0, type=int)
+    parser.add_argument('--num_iter', default=100, type=int)
+    parser.add_argument('--max_length', default=40, type=int)
     parser.add_argument('--batch_size', default=4, type=int)
     parser.add_argument('--file_in', default=os.path.join(HOME, 'data/snli_1.0/snli_1.0_dev.jsonl'), type=str)
     parser.add_argument('--cache', default='./cache', type=str)
